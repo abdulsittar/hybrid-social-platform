@@ -20,8 +20,8 @@ import { Cursor } from "mongoose";
 
 function CommentSA ({post, comment, isDetail, classes }) {
   const desc = useRef();
-  const [like, setLike] = useState(comment.likes.length);
-  const [dislike, setDislike] = useState(comment.dislikes.length);
+  const [like, setLike] = useState((comment.likes || []).length);
+  const [dislike, setDislike] = useState((comment.dislikes || []).length);
 
   const [isLiked, setIsLiked] = useState(false);
   const [isDisliked, setIsDisliked] = useState(false);

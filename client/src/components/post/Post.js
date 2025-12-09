@@ -5,6 +5,7 @@ import { AuthContext } from "../../context/AuthContext";
 import Icon from '@material-ui/core/Icon'
 import axios from "axios"
 import { MoreVert } from '@material-ui/icons';
+
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import { Link } from 'react-router-dom';
 import { withStyles } from '@material-ui/core/styles';
@@ -29,9 +30,35 @@ import { COLORS } from "../values/colors";
 import linkifyit from 'linkify-it';
 import { Write_something, comments } from '../../constants';
 import './post.css';
+import { toast } from 'react-toastify';
 //import User from "../../../../server/models/User";
+import * as timeago from 'timeago.js';
 
-function Post({onScrolling,  post, classes, isDetail }) {
+// Add this after the imports
+const srLatinLocale = (number, index) => {
+  return [
+    ['malopre', 'upravo sada'],
+    ['pre %s sekundi', 'za %s sekundi'],
+    ['pre 1 minut', 'za 1 minut'],
+    ['pre %s minuta', 'za %s minuta'],
+    ['pre 1 sat', 'za 1 sat'],
+    ['pre %s sati', 'za %s sati'],
+    ['pre 1 dan', 'za 1 dan'],
+    ['pre %s dana', 'za %s dana'],
+    ['pre 1 nedelju', 'za 1 nedelju'],
+    ['pre %s nedelja', 'za %s nedelja'],
+    ['pre 1 mesec', 'za 1 mesec'],
+    ['pre %s meseci', 'za %s meseci'],
+    ['pre 1 godinu', 'za 1 godinu'],
+    ['pre %s godina', 'za %s godina']
+  ][index];
+};
+
+
+// In the component or at the top level, register the Serbian locale:
+timeago.register('sr', srLatinLocale);
+
+function Post({onScrolling,  post, classes, isDetail, setHasReadArticle, currentRound, socket}) {
   const [comments, setComments] = useState([]);
   const inputEl = React.useRef<HTMLInputElement>(null);
   //console.log(post);
@@ -52,11 +79,16 @@ function Post({onScrolling,  post, classes, isDetail }) {
   const [rank, setRank] = useState(parseFloat(post.rank.toFixed(2)));//useState(post.reposts? post.reposts.length: 0);
 
   const [isReposted, setIsReposted] = useState(false);
+  const [webViewVisible, setWebViewVisible] = useState(false);
+const [webViewUrl, setWebViewUrl] = useState('');
+
   
   const [isNew, setIsNew] = useState(false);
 
   const [user, setUser] = useState({});
   const [text, setText] = useState('');
+  
+  const [webLink, setWebLink] = useState(post.webLinks);
   const [inputValue, setInputValue] = useState("");
   const linkify = linkifyit();
   
@@ -71,7 +103,8 @@ function Post({onScrolling,  post, classes, isDetail }) {
   const [thumbnail, setThumbnail] = useState('');
   //const [thumbnail, setThumbnail] = useState('/images/16251726578112.jpeg');
   var cover = true;
-
+  // State for controlling popup visibility
+  
   const { user: currentUser, dispatch } = useContext(AuthContext);
   const PF = process.env.REACT_APP_PUBLIC_FOLDER;
   const [isHovered, setIsHovered] = useState(false);
@@ -91,7 +124,7 @@ function Post({onScrolling,  post, classes, isDetail }) {
     try {
       const token = localStorage.getItem('token');
       const response = await axios.post('/posts/fetch-thumbnail', { 
-        urls: post.thumb, 
+       urls: post.thumb, 
         headers: { 'auth-token': token }
       });
       setThumbnail(response.data.thumbnail);
@@ -161,6 +194,37 @@ function Post({onScrolling,  post, classes, isDetail }) {
 
   }, [currentUser._id, post.likes, post.dislikes]);
 
+  // Listen for new comments via socket and update local state
+  useEffect(() => {
+    if (!socket) return;
+
+    const handler = (data) => {
+      try {
+        if (!data || !data.comment) return;
+        const incoming = data.comment;
+        const incomingPostId = data.postId || incoming.postId;
+        console.log("incomingPostId");
+        console.log(incoming);
+        console.log(incomingPostId);
+        console.log("Post");
+        console.log(post);
+        if (!incomingPostId) return;
+        if (incomingPostId.toString() === post._id) {
+          setComments(prev => {
+            const exists = (prev || []).some(c => c._id === incoming._id || c._id === incoming._id?.toString());
+            if (exists) return prev;
+            return [...(prev || []), incoming];
+          });
+        }
+      } catch (err) {
+        console.error('Error in newComment handler (Post):', err);
+      }
+    };
+
+    socket.on('newComment', handler);
+    return () => socket.off('newComment', handler);
+  }, [socket, post._id]);
+
   useEffect(() => {
     const token = localStorage.getItem('token');
     const fetchUser = async () => {
@@ -219,68 +283,48 @@ function Post({onScrolling,  post, classes, isDetail }) {
   };
 
 
-  // submit a comment
-  const onEnterSubmitHandler = async () => {
+  
 
-    const token = localStorage.getItem('token');
-    //setInputValue(prevValue => prevValue + "\n");
-    console.log(removeHtmlTags(inputValue).trim().length);
-    console.log("currentUser")
-    console.log(currentUser)
-    if(removeHtmlTags(inputValue).trim().length != 0){
+const submitHandler2 = async (e) => {
+  e.preventDefault();
+  
+};
+
+  // submit a comment
+const submitHandler = async (e) => {
+  e.preventDefault();
+  const token = localStorage.getItem("token");
+  if (removeHtmlTags(inputValue).trim().length === 0) return;
     try {
-      setInputValue('');
+      setInputValue("");
       const lc = await axios.post("/posts/" + post._id + "/comment", { userId: currentUser._id, username: currentUser.username, txt: inputValue, postId: post._id, headers: { 'auth-token': token } });
-      console.log("Posted a comment");
-      console.log(lc.data)
-      //setComments([...comments, lc.data]);
-      //post.comments([...comments, lc.data]);
-      setComments((prevItems) => [...prevItems, lc.data]);
-      setInputValue('');
-      const po = await axios.get("/posts/" + post._id, { headers: { 'auth-token': token } });
-      console.log("post");
-      console.log(po.data);
-      console.log(post);
-      setCurrentPost(po.data);
-      // refresh the page after posting something
-      //window.location.reload();
-    } catch (err) { 
-      console.log("Posted a comment");
-      console.log(err); }
+      setComments((prev) => [...prev, lc.data]);
+      const gptRes = await axios.post("/postdetail/paraphrase",{text: lc.data.body,  headers: { 'auth-token': token } });
+      const paraphrasedText = gptRes.data.paraphrasedText; 
+    } catch (err) {
+      console.log("Error posting comment:", err);
   }
 };
-  // submit a comment
-  const submitHandler = async (e) => {
-    e.preventDefault();
+// submit a comment
+  const onEnterSubmitHandler = async () => {
     const token = localStorage.getItem('token');
     console.log(removeHtmlTags(inputValue).trim().length);
     console.log("currentUser")
     console.log(currentUser)
-    if(removeHtmlTags(inputValue).trim().length != 0){
-    const newComment = { userId: user._id, description: inputValue,};
-    console.log(newComment);
+    if (removeHtmlTags(inputValue).trim().length === 0) return;
+
     try {
       setInputValue('');
       const lc = await axios.post("/posts/" + post._id + "/comment", { userId: currentUser._id, username: currentUser.username, txt: inputValue, postId: post._id, headers: { 'auth-token': token } });
-      console.log("Posted a comment");
-      console.log(lc.data)
-      //setComments([...comments, lc.data]);
-      //post.comments([...comments, lc.data]);
-      setComments((prevItems) => [...prevItems, lc.data]);
+      setComments((prev) => [...prev, lc.data]); 
+      const gptRes = await axios.post("/postdetail/paraphrase",{text: lc.data.body,  headers: { 'auth-token': token } });  
+      const paraphrasedText = gptRes.data.paraphrasedText; 
       setInputValue('');
-      const po = await axios.get("/posts/" + post._id, { headers: { 'auth-token': token } });
-      console.log("post");
-      console.log(po.data);
-      console.log(post);
-      setCurrentPost(po.data);
-      // refresh the page after posting something
-      //window.location.reload();
     } catch (err) { 
       console.log("Posted a comment");
-      setInputValue('');
-      console.log(err); }
-    }
-  };
+      console.log(err);
+  }
+};
 
   /*const likeHandler = () => {
     try {
@@ -407,6 +451,226 @@ function Post({onScrolling,  post, classes, isDetail }) {
   }*/
   };
 
+  const toggleWebView = async () => {
+    setHasReadArticle(true);
+    
+    console.log("🟢 toggleWebView called - Adding green bar!");
+    
+    try {
+        const token = localStorage.getItem('token');
+        const lc = await axios.post("/posts/" + currentUser._id + "/track-view", {postId: post._id, userId: currentUser._id, headers: { 'auth-token': token }});
+        console.log("Viewpost updated successfully.");
+        
+    } catch (error) {
+        console.error("Error updating view post:", error);
+
+    }
+    
+};
+
+
+  const toggleWebView3 = async () => {
+    try {
+        const token = localStorage.getItem('token');
+        await axios.post("/posts/" + currentUser._id + "/track-view", {
+            postId: post._id, 
+            userId: currentUser._id,
+            headers: { 'auth-token': token }
+        });
+
+        console.log("Viewpost updated successfully.");
+    } catch (error) {
+        console.error("Error updating view post:", error);
+    }
+    
+    toast.info(
+        <div 
+            style={{ 
+                display: 'flex', 
+                justifyContent: 'center', 
+                alignItems: 'center', 
+                width: '100vw', 
+                height: '100vh', 
+                backgroundColor: 'rgba(0, 0, 0, 0.5)', // Semi-transparent overlay
+                position: 'fixed', 
+                top: 0, 
+                left: 0, 
+                zIndex: 1000,
+            }}
+        >
+            <div style={{
+                width: '600px', // Fixed width
+                height: '80vh', // Responsive height
+                backgroundColor: 'white',
+                borderRadius: '10px',
+                padding: '0px',
+                position: 'relative',
+                boxShadow: '0px 4px 10px rgba(0, 0, 0, 0.2)',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+            }}>
+                {/* Green bar at the top of the webview */}
+                <div style={{ 
+                  width: '100%', 
+                  height: '4px', 
+                  backgroundColor: '#4CAF50',
+                  borderRadius: '10px 10px 0 0',
+                  marginBottom: '15px'
+                }}></div>
+                
+                <div style={{ padding: '15px', width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                    <iframe 
+                        src={webLink} 
+                        title="WebView"
+                        style={{
+                            width: '100%', 
+                            height: '100%', 
+                            border: 'none', 
+                            borderRadius: '8px',
+                        }}
+                    />
+                </div>
+
+                <button 
+                    onClick={() => toast.dismiss()} 
+                    style={{
+                        position: 'absolute',
+                        top: '35px',
+                        right: '25px',
+                        padding: '8px 16px',
+                        backgroundColor: '#ff4d4f',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '5px',
+                        cursor: 'pointer',
+                        fontSize: '14px',
+                        zIndex: '10000'
+                    }}
+                >
+                    Zatvori
+                </button>
+            </div>
+        </div>,
+        {
+            position: "top-center",
+            autoClose: false,
+            hideProgressBar: true,
+            closeButton: false,
+            className: "webview-toast-container",
+        }
+    );
+};
+
+  const toggleWebView2 = async () => {
+    const screenWidth = window.innerWidth; // Get the screen width
+    //const iframeWidth = screenWidth <= 800 ? '65vh' : '125vh'; // Adjust width based on screen size
+  
+    let iframeWidth;
+    if (screenWidth < 550) {
+        iframeWidth = '45vh';  // Very small screens
+    } else if (screenWidth >= 550 && screenWidth < 600) {
+        iframeWidth = '45vh';  // Small screens
+    } else if (screenWidth >= 731 && screenWidth < 730) {
+        iframeWidth = '45vh';  // Slightly larger screens
+    } else if (screenWidth >= 731 && screenWidth < 800) {
+        iframeWidth = '45vh';  // Medium screens
+    } else if (screenWidth >= 801 && screenWidth < 1200) {
+        iframeWidth = '45vh';  // Large screens
+    } else {
+        iframeWidth = '45vh';  // Extra large screens
+    }
+    
+    iframeWidth = '25vh';
+    
+    try {
+      const token = localStorage.getItem('token');
+      const lc = await axios.post("/posts/" + currentUser._id + "/track-view", {postId: post._id, userId: currentUser._id, headers: { 'auth-token': token }});
+      
+      
+      console.log("Viewpost updated successfully.");
+  } catch (error) {
+      console.error("Error updating view post:", error);
+  }
+    
+    toast.info(
+      <div 
+          style={{ 
+              display: 'flex', 
+              flexDirection: 'column', 
+              alignItems: 'center', 
+              width: '80vw', 
+              height: '80vh', 
+              backgroundColor: 'white', 
+              overflow: 'hidden',
+              borderRadius: '10px',
+              position: 'relative'
+          }}
+      >
+          {/* Green bar at the top of the webview */}
+          <div style={{ 
+            width: '100%', 
+            height: '4px', 
+            backgroundColor: '#4CAF50',
+            borderRadius: '10px 10px 0 0',
+            marginBottom: '10px'
+          }}></div>
+          
+          <div style={{
+              width: '100%',
+              height: '100%',
+              overflow: 'auto',
+              position: 'relative',
+              padding: '15px',
+              boxSizing: 'border-box'
+          }}>
+              <iframe src={webLink} title="WebView"
+                  style={{
+                      width: '100%',
+                      height: '100%',
+                      border: 'none',
+                      borderRadius: '8px',
+                      display:'block'
+                  }}
+              />
+          </div>
+          
+          <button 
+              onClick={() => toast.dismiss()} 
+              style={{
+                  position: 'absolute',
+                  top: '35px',
+                  right: '25px',
+                  padding: '10px 20px',
+                  backgroundColor: '#ff4d4f',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '5px',
+                  cursor: 'pointer',
+                  fontSize: '16px',
+                  zIndex: '10000'
+              }}
+          >
+              Zatvori
+          </button>
+      </div>,
+      {
+          position: "top-center",
+          autoClose: false,
+          hideProgressBar: true,
+          closeButton: false,
+          className: "webview-toast-container",
+          style: {
+              width: 'auto',
+              maxWidth: '95vw',
+              padding: '0px',
+              margin: '0px'
+          }
+      }
+  );
+
+};
+
   const showCommentsHandler = () => {
     var bottomdiv = document.getElementsByClassName("form")
     bottomdiv.style.display="none";
@@ -416,10 +680,11 @@ function Post({onScrolling,  post, classes, isDetail }) {
     // Regular expression to match HTML tags
     const htmlRegex = /<[^>]*>/g;
     
-    // Remove HTML tags from the text
+    // Remove HTML tags from the text  "https://socialapp.ijs.si/news/zelensky-ukraine-must-be-included"
     const textWithoutHtml = text.replace(htmlRegex, '');
     
     return textWithoutHtml;
+    
 }
 
 const triangleStyle = {
@@ -455,8 +720,18 @@ const triangleOverlayStyle = {
 
   return (
     <InView as="div" onChange={(inView, entry) => handleViewedChange(inView, post)}>
-    <div className={classes.post} style={{ position: "relative", margin: isDetail && "5px 0",  background: repost>0 ? "#F5F5F5" : "#ffffff"}}  >
+    <div className={classes.post} style={{ position: "relative", margin: isDetail && "5px 0",  background: repost > 0 ? "#F5F5F5" : "#ffffff"}}  >
+      
+      {/* Green bar at the top of the post */}
+      <div style={{ 
+        width: '100%', 
+        height: '4px', 
+        backgroundColor: '#4CAF50',
+        borderRadius: '2px 2px 0 0'
+      }}></div>
+
       <div className={classes.postWrapper} style={{ background: repost>0 ? "#F5F5F5" : "#ffffff" }}>
+      
       <div style={triangleOverlayStyle}></div>
         <div className={classes.postTop} style={{ background: repost>0 ? "#ffffff" : "#ffffff" }}>
         {(repost > 0)? 
@@ -491,8 +766,8 @@ const triangleOverlayStyle = {
               {user.username}
             </span>
             </Link>
-            <span className={classes.postDate} style={{ background: repost>0 ? "#F5F5F5" : "#ffffff" }}>{format(post.createdAt)}</span>
-            {/*<span className={classes.postDate} style={{margin: '0px 0px 0px 20px',}}>{" Reposted by: "+ repost}</span>*/}
+            <span className={classes.postDate} style={{ background: repost>0 ? "#F5F5F5" : "#ffffff" }}>{format(post.createdAt, 'sr')}</span>
+            {/*<span className={classes.postDate} style={{margin: '0px 0px 0px 20px',}}>{"group= "+ post.userGroup +" | round# "+ post.treatment+" | post label= "+ post.content+" | ranking= "+post.rank+" | ukraine score= "+post.ukraine+" | disinfo score= "+post.disinfo}</span>*/}
           </div>
           
           { /*(repost < 1)?
@@ -508,13 +783,19 @@ const triangleOverlayStyle = {
         <div className={classes.postCenter} style={{ background: repost>0 ? "#F5F5F5" : "#ffffff" }}>
         <Linkify componentDecorator={(decoratedHref, decoratedText, key) => (<a target="blank" rel="noopener noreferrer" href={decoratedHref} key={key} > {decoratedText} </a>)}>
           <div className={classes.postText}  style={{ background: repost>0 ? "#F5F5F5" : "#ffffff" }}>
-            {!isDetail && post?.desc.length > 0? 
-              <div className={classes.postText}  style={{ background: repost>0 ? "#F5F5F5" : "#ffffff" }} dangerouslySetInnerHTML={{ __html: post?.desc }}> 
+            {/*!isDetail && post?.desc.length > 0? */}
+              <div className={classes.content}  style={{ background: repost>0 ? "#F5F5F5" : "#ffffff" }} dangerouslySetInnerHTML={{ __html: post?.desc }}> 
+              
                   {/*<Link to={{pathname:`/postdetail/${user.username}`, state:{myObj: currentPost}}}></Link>*/}
                 </div>
-            :
+            {/*!isDetail && !["pro ukraine", "pro russia", "mixed", "neutral", "neutral", "neutral"].includes(post.content) && (<button 
+                onClick={toggleWebView} 
+                style={{ display: 'inline-block', verticalAlign: 'middle', padding: '0px 20px', margin: '0px 20px'}}>
+                Read full article
+            </button>)*/}
+            {/*}:
             <div className={classes.postText}  style={{ background: repost>0 ? "#F5F5F5" : "#ffffff" }} dangerouslySetInnerHTML={{ __html: post?.desc }}>
-             </div>}
+             </div>}*/}
             
             
             {thumbnail && (
@@ -534,13 +815,15 @@ const triangleOverlayStyle = {
                   
             <img src={`${PF}cdislike.png`} alt="" className={classes.likeIcon} onClick={dislikeHandler} />
             <span className={classes.postDislikeCounter}>{dislike}</span>
-             
+            <form class = "form">
+            <SendIcon className={classes.sendButton2} style={{ display:"flex", margin:"0px 20px"}} type="submit" onClick={submitHandler2}/>
+            </form>
           </div>
           <div className={classes.postBottomRight} style={{ background: repost>0 ? "#F5F5F5" : "#ffffff" }}>
-          <Link style={{textDecoration: 'none', color: COLORS.textColor}} to={{pathname:`/postdetail/${user.username}`, state:{myObj: currentPost}}}> <div className={classes.postCommentText} >{comments.length} {"Kommentare"}</div></Link>
+          <Link style={{textDecoration: 'none', color: COLORS.textColor}} to={{pathname:`/postdetail/${user.username}`, state:{myObj: currentPost}}}> <div className={classes.postCommentText} >{comments.length} {"Komentara"}</div></Link>
           </div>
         </div>
-        {isDetail && (
+        {
         <div ref={ref} className={classes.commentsWrapper}  style={{ display: isVisible ? "block" : "none", background: repost>0 ? "#F5F5F5" : "#ffffff" }}>
         <hr className={classes.shareHr} />
         
@@ -555,11 +838,11 @@ const triangleOverlayStyle = {
             </form>
             </div>
             <div className={classes.commentTop} style={{ background: repost>0 ? "#F5F5F5" : "#ffffff" }}>
-            {comments.map((item, i) => {
+            {comments.slice(0).reverse().map((item, i) => {
               console.log(i);
               console.log(item._id);
                       //return <CommentSA key={item._id} post={post} comment={item} isDetail={false}/>
-              if(isDetail===false && i < 1) {
+              if(isDetail===false && i < 5) {
                   return <CommentSA key={item._id} post={post} comment={item} isDetail={false}/>
 
               } else if(isDetail === true) {
@@ -569,7 +852,7 @@ const triangleOverlayStyle = {
               })
             }
         </div>
-        </div>)}
+        </div>}
       </div>
     </div>
     </InView>

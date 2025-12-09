@@ -139,7 +139,7 @@ const fetchTimeSpent = async () => {
 
 const fetchTimeSpent2 = async () => {
   const token = localStorage.getItem('token');
-    const res = await axios.get("/users/" + currentUser._id + "/getUserActions", {headers: { 'auth-token': token }})
+    /*const res = await axios.get("/users/" + currentUser._id + "/getUserActions", {headers: { 'auth-token': token }})
     console.log(res.data);
     
     
@@ -151,7 +151,7 @@ const fetchTimeSpent2 = async () => {
           //setDay_Three_Percent(100);
           //setDay_Four_Percent(100);
           //setDay_Five_Percent(100);
-        }
+        }*/
     
         
         //if(res.data["showAlert"] == "no"){

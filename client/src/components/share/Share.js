@@ -17,7 +17,7 @@ import {io} from 'socket.io-client';
 function Share({classes}) {
     const { user } = useContext(AuthContext);
     const PF = process.env.REACT_APP_PUBLIC_FOLDER;
-    const [text, setText] = useState('')
+    const [text1, setText1] = useState('')
     const desc = useRef();
     const [file, setFile] = useState(null);
     const isMobileDevice = useMediaQuery({ query: "(min-device-width: 480px)", });
@@ -26,111 +26,117 @@ function Share({classes}) {
 
 
     useEffect(() => {
-        console.log("setSocket");
-        setSocket(io('wss://cleopatra.ijs.si/chat', {
-            transports: ['polling'],
-            withCredentials: true
-          }));
-          
-        //setSocket(io('http://localhost:8080', {
-        //    withCredentials: true, // Include credentials if necessary
-        //    transports: [ 'polling'],
-        //}
-        //)
-        //);
-        
-        const newSocket = io('wss://cleopatra.ijs.si/chat', {
-            withCredentials: true, // Include credentials if necessary
-            transports: ['polling'], // Fallback to different transports if necessary
-        });
-        
-        newSocket.on('connect', () => {
-            console.log('Connected to Socket.IO server');
-        });
+  if (socket) return; // prevent reinitialization
 
-        newSocket.on('connect_error', (error) => {
-            console.error('Connection error:', error);
-            // You can also access more detailed information from the error object:
-            if (error.message) {
-                console.error('Error message:', error.message);
-            }
-            if (error.stack) {
-                console.error('Error stack:', error.stack);
-            }
-            if (error.req) {
-                console.error('Error message:', error.req);
-            }
-            if (error.code) {
-                console.error('Error message:', error.code);
-            }
-            if (error.context) {
-                console.error('Error message:', error.context);
-            }
-            
-        });
+  try {
+    // Same origin (works locally + in production)
+    const SOCKET_URL = `${window.location.protocol}//${window.location.host}`;
 
-        newSocket.on('connect_timeout', () => {
-            console.error('Connection timeout');
-        });
+    const newSocket = io('/', {
+      path: '/socket.io',
+      transports: ['websocket', 'polling'],
+      withCredentials: true,
+    });
 
-        newSocket.on('error', (error) => {
-            console.error('General error:', error);
-            // Log more detailed error information
-            if (error.message) {
-                console.error('Error message:', error.message);
-            }
-            if (error.stack) {
-                console.error('Error stack:', error.stack);
-            }
-        });
-        
-    }, [])
+    setSocket(newSocket);
 
-    useEffect(() => {
+    newSocket.on('connect', () => {
+      console.log('✅ Connected to Socket.IO server:', newSocket.id);
+      if (user?._id) newSocket.emit('addUser', user._id);
+    });
+
+    newSocket.on('connect_error', (error) => {
+      console.error('❌ Socket connection error:', error.message);
+    });
+
+    newSocket.on('disconnect', (reason) => {
+      console.warn('⚠️ Socket disconnected:', reason);
+    });
+
+    // Optional: Handle reconnect attempts
+    newSocket.io.on('reconnect_attempt', () => {
+      console.log('🔄 Attempting to reconnect...');
+    });
+
+    // cleanup on unmount
+    return () => {
+      console.log('🧹 Cleaning up Share socket listeners...');
+      newSocket.disconnect();
+    };
+  } catch (err) {
+    console.error('Socket init error in Share:', err);
+  }
+}, []);
+
+    /*useEffect(() => {
         socket?.emit('addUser', user?.id)
         console.log("active users ")
         socket?.on('getUsers', users => {
             console.log("active users ", users)
         })
-    }, [socket])
+    }, [socket])*/
 
     // submit a post
-    const submitHandler = async (e) => {
-        console.log("Submit Handler");
-        e.preventDefault();
-        const token = localStorage.getItem('token');
-        const newPost = {
-          userId: user._id,
-          desc: text,
-          pool:user.pool,
-          headers: { 'auth-token': token },
-        };
-        if (file) {
-            
-          const data = new FormData();
-          const fileName = Date.now() + file.name;
-          data.append("name", fileName);
-          data.append("file", file);
-          newPost.img = fileName;
-          //console.log(newPost);
-          try {
-            await axios.post("/upload", data, {headers: { 'auth-token': token }});
-          } catch (err) {}
-        }
-        try {
-        const pst = await axios.post("/posts/" + user._id + "/create", newPost);
-        socket.emit('sendMessage', pst);
-        setText("");
-        
-          //await axios.post("/posts/create", newPost);
-          // refresh the page after posting something
-          //window.location.reload();
+const submitHandler = async (e) => {
+  console.log("📝 Submit Handler triggered");
+  e.preventDefault();
 
-        } catch (err) {console.log(err);}
-    };
+  const token = localStorage.getItem('token');
+  if (!token) {
+    console.error("❌ No auth token found in localStorage");
+    return;
+  }
+
+  const newPost = {
+    userId: user._id,
+    desc: text1,
+    pool: user.pool,
+    headers: { 'auth-token': token },
+  };
+
+  try {
+    // --- 1️⃣ Handle file upload ---
+    if (file) {
+      const data = new FormData();
+      const fileName = Date.now() + file.name;
+      data.append("name", fileName);
+      data.append("file", file);
+      newPost.img = fileName;
+
+      await axios.post("/upload", data, {
+        headers: { 'auth-token': token },
+      });
+    }
+
+    // --- 2️⃣ Create post via API ---
+    const response = await axios.post(`/posts/${user._id}/create`, newPost, {
+      headers: { 'auth-token': token },
+    });
+
+    const createdPost = response.data;
+    console.log("✅ Post created:", createdPost);
+
+    // --- 3️⃣ Emit socket event safely ---
+    if (socket && socket.connected) {
+      socket.emit('sendMessage', createdPost);
+      console.log("📨 Sent new post event via socket:", createdPost);
+    } else {
+      console.warn("⚠️ Socket not connected — skipping emit");
+    }
+
+    // --- 4️⃣ Reset form ---
+    setText1("");
+    setFile(null);
+    // optionally refresh feed manually, e.g.:
+    // fetchPosts();
+
+  } catch (err) {
+    console.error("❌ Error in submitHandler:", err);
+  }
+};
 
     function handleChange(text) {
-        setText(text)
+        setText1(text)
         console.log("enter", text);
       }
 
@@ -154,7 +160,7 @@ function Share({classes}) {
                     <InputEmoji
                         placeholder={What_in_your_mind + user.username + "?"}
                         className={classes.shareInput}
-                        value={text}
+                        value={text1}
                         onChange={handleChange}
                         ref={desc}
                     />

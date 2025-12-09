@@ -27,8 +27,7 @@ const Transition = React.forwardRef(function Transition(props, ref) {
   return <Slide direction="up" ref={ref} {...props} />;
 });
 
-
-function Feed({username, classes, selectedValue, searchTerm}) {
+function Feed({username, classes, selectedValue, searchTerm, actionTriggered, setHasReadArticle, currentRound}) {
 const [posts, setPosts] = useState([]);
 const [hasMore, setHasMore] = useState(true);
 const [index, setIndex] = useState(0);
@@ -42,19 +41,30 @@ const isMobileDevice = useMediaQuery({ query: "(min-device-width: 480px)", });
 const isTabletDevice = useMediaQuery({ query: "(min-device-width: 768px)", });
 const [socket, setSocket] = useState(null)
 const [open, setOpen] = React.useState(false);
+//const [hasReadArticle, setHasReadArticle] = useState(false);
  
 let postCallCount = 0; 
 let maxCalls = 5; 
+
+
+const handleFeedAction = async (e) => {
+    console.log("Feed received action from Topbar!");
+    const token = localStorage.getItem('token');
+    
+    const lc = await axios.post("/posts/" + currentUser._id + "/createRefreshData", { version: user.pool, userId: user._id, headers: { 'auth-token': token }});
+    fetchPosts(0); 
+    
+};
 
   const handleClickOpen = () => {
     setOpen(true);
   };
 
-  const handleClose = () => {
+  /*const handleClose = () => {
     setOpen(false);
     continueProcess(0)
     setPosts(prevPosts => prevPosts.slice(1));
-  };
+  };*/
   
   const handleYes = async (e) => {
     setOpen(false);
@@ -62,7 +72,7 @@ let maxCalls = 5;
     const firstPost = posts[0];
     
     setTimeout(() => {
-        setPosts(prevPosts => prevPosts.slice(1));
+        /*(prevPosts => prevPosts.slice(1));*/
       }, 1000);
     
     const token = localStorage.getItem('token');
@@ -116,30 +126,93 @@ const [windowSize, setWindowSize] = useState(getWindowSize());
     
 //}, [])
 
-useEffect(() => {
+useEffect(() => { 
+    if (actionTriggered) {
+        handleFeedAction();
+    }
+}, [actionTriggered]);
+
+/*useEffect(() => {
     console.log('Posts updated: ', posts);
-}, [posts]);
+}, [posts]);*/
+
+const userRef = useRef(currentUser);
+useEffect(() => {
+  userRef.current = currentUser;
+}, [currentUser]);
 
 useEffect(() => {
+  if (socket) return;
 
-    socket?.emit('addUser', user?.id)
-        console.log("active users ")
-        socket?.on('getUsers', users => { 
-            console.log("active users ", users)
-        })
+  const newSocket = io('/', {
+    path: '/socket.io',
+    transports: ['websocket', 'polling'],
+    withCredentials: true,
+  });
+  setSocket(newSocket);
 
-    socket?.on('getMessage', res => {
-        console.log('active data: >>', res.data );
-        if(res.data.pool == user.pool){
-            const arr = [res.data]
-            setPosts((prevItems) => [...arr, ...prevItems]);
-            console.log('posts data: >>', posts );
-        }
-        
-        //fetchPosts(selectedValue); 
-    });
-    
-}, [socket]);
+  newSocket.on('connect', () => {
+    console.log('✅ Socket connected:', newSocket.id);
+    if (userRef.current?.id) newSocket.emit('addUser', userRef.current.id);
+  });
+
+  newSocket.on('connect_error', (err) => {
+    console.error('❌ Socket connection error:', err.message);
+  });
+
+  newSocket.on('getMessage', (res) => {
+    const newPost = res?.data;
+    //if (!newPost) return;
+
+    // Use latest user from ref
+    if (newPost.pool !== userRef.current?.pool) return;
+    console.log("New post received:", newPost);
+
+    // Safely update posts
+    setPosts(prevPosts => {
+      const postsArray = Array.isArray(prevPosts) ? prevPosts : [];
+      //if (postsArray.some(p => p._id === newPost._id)) return postsArray;
+        const updatedPosts = [newPost, ...postsArray];
+        console.log('Posts after new message1:', updatedPosts.length); // ✅ Correct length
+      return updatedPosts;
+});
+
+    console.log('Posts after new message2:', posts.length);
+  });
+
+  newSocket.on('newComment', (res) => {
+  console.log("Incoming comment:", res);
+
+  if (!res?.postId || !res?.body) return;
+
+  setPosts(prevPosts =>
+    prevPosts.map(post => {
+      // Inspect the post object
+      console.log("Post object keys:", Object.keys(post));
+
+      const postId = post._id || post.id || post.post_id;
+      console.log("Derived postId:", postId, "Comment postId:", res.postId);
+
+      if (postId === res.postId) {
+        const updatedComments = [...(post.comments || []), res];
+        console.log(`Post ${postId} now has ${updatedComments.length} comments`);
+        return { ...post, comments: updatedComments };
+      }
+
+      return post;
+    })
+  );
+});
+
+  return () => {
+    console.log('🧹 Cleaning up socket listeners...');
+    newSocket.off('getMessage');
+    newSocket.off('newComment');
+    newSocket.disconnect();
+  };
+}, []);
+
+
 
 const showPostsInOrder = async () => {
     const token = localStorage.getItem('token');
@@ -150,7 +223,8 @@ const showPostsInOrder = async () => {
     if(res.data['no']){
         const arr = [{"_id": res.data["_id"], "desc":res.data["desc"], "pool":res.data["pool"] , "userId": "66f590ae38f16e2cea8d0646", "thumb":"https://fastly.picsum.photos/id/451/200/300.jpg?blur=5&hmac=Cs_EydLmPTWdSMrzBl8vXIG9b3CaH9iP_yVdDFiXUhU", "likes":[],
         "dislikes":[], "comments":[], "reposts":[], "rank":1000}]
-        setPosts((prevItems) => [...arr, ...prevItems]);
+        //setPosts((prevItems) => [...arr, ...prevItems]);
+        setPosts(arr);
         console.log('posts data: >>', posts );
 
         //postCallCount++;
@@ -188,7 +262,7 @@ const [followed, setFollowed] = useState([]
 
     } else if(preFilter !== selectedValue){
     setIndex(0);
-    setPosts([]);
+    //setPosts([]);
     setPreFilter(selectedValue);
 
     }
@@ -210,7 +284,7 @@ if (preProfile === " ") {
     console.log("a NEW User name");
     console.log(username);
     setIndex(0);
-    setPosts([]);
+    //setPosts([]);
     setPreProfile(username);
 }
 }
@@ -253,7 +327,7 @@ if (preProfile === " ") {
 }
 }
 
-    var whPosts = "/posts/timelinePag/";
+    
 
     if(selectedValue == 0){
     var whPosts = "/posts/timelinePag/";
@@ -272,12 +346,14 @@ if (preProfile === " ") {
     console.log("fetch posts");
     if(res.data.length){
     if(res.data.length > 0){
-        setPosts((prevItems) => [...prevItems, ...res.data
+        setPosts([])
+        setPosts(res.data)
+        //setPosts((prevItems) => [...prevItems, ...res.data
             //.sort((p1,p2) => {return new Date(p2.createdAt) - new Date(p1.createdAt);})
-        ]); 
+        //]); 
         res.data.length%20 > 0 ? setHasMore(false) : setHasMore(true);
         //setIndex((index) => index + 1);
-        increment(index, 1);
+        increment(index, 0);
         setProgress(100);
     } else {
         setHasMore(false);
@@ -290,7 +366,8 @@ if (preProfile === " ") {
     //setPreFilter(whPosts);
     console.log(whPosts);
     //setPosts(res.data.sort((p1,p2) => {return new Date(p2.createdAt) - new Date(p1.createdAt);})); 
-}};
+}
+};
 
 function updateViewdPosts( post) {
     /*const oldViewed = [...viewedPosts, post];
@@ -338,11 +415,13 @@ const fetchMoreData = async () => {
     //console.log(res.data);
     
     if(res.data.length > 0){
-        setPosts((prevItems) => [...prevItems, ...res.data
+        //setPosts((prevItems) => [...prevItems, ...res.data
             //.sort((p1,p2) => {return new Date(p2.createdAt) - new Date(p1.createdAt);})
-        ]); 
+        //]);
+        setPosts([])
+        setPosts(res.data)
          res.data.length%20 > 0 ? setHasMore(false) : setHasMore(true);
-        increment(index, 1);
+        increment(index, 0);
         setProgress(100);
     }else {
         setHasMore(false);
@@ -360,10 +439,8 @@ function getWindowSize() {
 
 useEffect(() => {
     //registerAndSubscribe();
-
     console.log("use effects!");
     //showPostsInOrder();
-    
     if (selectedValue !=10){
     ///// Remove this breakpoint during the casestudy
         //filterLoadedPosts()
@@ -374,26 +451,23 @@ useEffect(() => {
         } else {
             //filterLoadedPosts()
             fetchPosts(selectedValue);
-    }
+        }
     }
 
     function handleWindowResize() {
         setWindowSize(getWindowSize());
-        }
+    }
+    window.addEventListener('resize', handleWindowResize);
     
-        window.addEventListener('resize', handleWindowResize);
-    
-        return () => {
+    return () => {
         window.removeEventListener('resize', handleWindowResize);
-        };
-
-        
+    };
 
 }, [username, user._id, selectedValue, searchTerm])
 
 const refreshed = async (selectedValue) => {
     console.log("refreshed");
-    setPosts([]);
+    //setPosts([]);
     const chek = username ?  true : false;
 if(chek == true) {
     console.log(preProfile);
@@ -413,7 +487,7 @@ if (preProfile === " ") {
     console.log("a NEW User name");
     console.log(username);
     setIndex(0);
-    setPosts([]);
+    //setPosts([]);
     setPreProfile(username);
 }
 }
@@ -437,12 +511,14 @@ if (preProfile === " ") {
     console.log("fetch posts");
     if(res.data.length){
     if(res.data.length > 0){
-        setPosts((prevItems) => [...prevItems, ...res.data
+        //setPosts((prevItems) => [...prevItems, ...res.data
             //.sort((p1,p2) => {return new Date(p2.createdAt) - new Date(p1.createdAt);})
-        ]); 
+        //]);
+        setPosts([])
+        setPosts(res.data)
         res.data.length%20 > 0 ? setHasMore(false) : setHasMore(true);
         //setIndex((index) => index + 1);
-        increment(0, 1);
+        increment(0, 0);
     } else {
         setHasMore(false)
         //setPosts([]);
@@ -459,10 +535,20 @@ return (
     <LoadingBar   color="#f11946"   progress={progress}   onLoaderFinished={() => setProgress(0)} />
         <InfiniteScroll dataLength={posts.length} next={fetchMoreData} hasMore={hasMore} loader={<Loader />}>
         <div className={classes.feedWrapper} style={{"width": (!isMobileDevice && !isTabletDevice) && (windowSize.innerWidth-10)+"px"}}>
-            {( !username || username === user.username) }
-            {posts.map((p) => {
-                return <Post onScrolling={updateViewdPosts} key={p._id} post={p} isDetail={false}/>
-            })}
+             {( !username || username === user.username) && <Share/> }
+            {Array.isArray(posts) && posts.length > 0 ? (
+          posts.map((p) => (
+      <Post key={p._id || Math.random()}
+      socket={socket}
+      post={p}
+      isDetail={false}
+      setHasReadArticle={setHasReadArticle}
+      currentRound={currentRound}
+        />
+      ))
+        ) : (
+        <p className="text-center text-gray-500 mt-4">No posts yet.</p>
+        )}
         </div>
         </InfiniteScroll>
         

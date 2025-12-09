@@ -219,7 +219,7 @@ const timeoutId = useRef(null);
         
           const fetchTimeSpent2 = async (pathname) => {
             const token = localStorage.getItem("token");
-            const res = await axios.get(`/users/${currentUser._id}/getUserActions`, {
+            /*const res = await axios.get(`/users/${currentUser._id}/getUserActions`, {
               headers: { "auth-token": token },
             });
         
@@ -268,7 +268,7 @@ const timeoutId = useRef(null);
               }
             } else {
               console.log("Alert type is the same, keeping the current alert on screen.");
-            }
+            }*/
           };
         
           const handleSecondAlertClose = () => {
